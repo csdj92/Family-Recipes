@@ -11,10 +11,7 @@ async def get_redis():
         encoding="utf8",
         decode_responses=True
     )
-    try:
-        yield redis
-    finally:
-        await redis.close()
+    return redis
 
 def get_db():
     db = SessionLocal()

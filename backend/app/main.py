@@ -10,15 +10,18 @@ from .config import get_settings
 
 settings = get_settings()
 
+async def get_redis():
+    return await aioredis.from_url(
+        settings.REDIS_URL or "redis://localhost",
+        encoding="utf8",
+        decode_responses=True
+    )
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Setup - Initialize FastAPILimiter with Redis
     try:
-        redis = await aioredis.from_url(
-            settings.REDIS_URL or "redis://localhost",
-            encoding="utf8",
-            decode_responses=True
-        )
+        redis = await get_redis()
         await FastAPILimiter.init(redis)
         yield
     except Exception as e:
@@ -74,7 +77,40 @@ async def root():
 
 @app.get("/health")
 async def health_check():
+    try:
+        # Test Redis connection
+        redis = await get_redis()
+        await redis.ping()
+        redis_status = "connected"
+    except Exception as e:
+        redis_status = f"error: {str(e)}"
+    finally:
+        if 'redis' in locals():
+            await redis.close()
+            
     return {
         "status": "healthy",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "redis": redis_status
     }
+
+@app.get("/test-redis")
+async def test_redis():
+    try:
+        redis = await get_redis()
+        # Test setting a value
+        await redis.set("test_key", "test_value", ex=60)
+        # Test getting the value
+        value = await redis.get("test_key")
+        return {
+            "status": "success",
+            "test_value": value
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+    finally:
+        if 'redis' in locals():
+            await redis.close()

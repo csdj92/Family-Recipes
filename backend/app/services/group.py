@@ -25,43 +25,32 @@ class GroupService:
             logger.error(f"Cache invalidation error: {str(e)}")
 
     async def create_group(self, db: Session, user_id: UUID, group: GroupCreate) -> FamilyGroup:
+        """Create a new family group"""
         try:
-            logger.info(f"Creating new group for user {user_id}")
-            group_data = group.model_dump()
-            group_data["owner_id"] = user_id
-            
-            # Create the group
-            group = FamilyGroup(**group_data)
-            db.add(group)
-            db.flush()  # Flush to get the group ID
-            
-            # Add the creator as a member
-            group_member = GroupMember(
-                user_id=user_id,
-                group_id=group.id
+            db_group = FamilyGroup(
+                name=group.name,
+                owner_id=user_id
             )
-            db.add(group_member)
-            
+            db.add(db_group)
             db.commit()
-            db.refresh(group)
-            logger.info(f"Successfully created group {group.id}")
-            await self.invalidate_group_cache()
-            return group
+            db.refresh(db_group)
+            
+            # Add the owner as a member
+            member = GroupMember(
+                user_id=user_id,
+                group_id=db_group.id
+            )
+            db.add(member)
+            db.commit()
+            
+            return db_group
             
         except SQLAlchemyError as e:
             db.rollback()
-            logger.error(f"Database error while creating group: {str(e)}")
+            logger.error(f"Error creating group: {str(e)}")
             raise HTTPException(
-                status_code=500,
-                detail="Internal Server Error"
-            )
-            
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Unexpected error while creating group: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail="Internal Server Error"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Could not create group {e}" 
             )
     
     def get_user_groups(self, db: Session, user_id: UUID) -> List[FamilyGroup]:
@@ -113,4 +102,17 @@ class GroupService:
         logger.info(f"Successfully added user {user_id} to group {group_id}")
         return group_member
     
+    def get_group_members(self, db: Session, user_id: UUID, group_id: UUID) -> List[GroupMember]:
+        """Get all members for group"""
+        requester = db.query(User).filter(User.id == user_id).first()
+        if not requester or requester.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.CREATOR]:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        logger.info(f"Getting all members for group {group_id}")
+        members = db.query(GroupMember).filter(GroupMember.group_id == group_id).all()
+        logger.info(f"Found {len(members)} members for group {group_id}")
+        return members  # Return GroupMember objects directly instead of user objects
     

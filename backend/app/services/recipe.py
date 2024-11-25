@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status, UploadFile
 from uuid import UUID
 from typing import List
+import asyncio
 
 from ..models.recipe import Recipe
 from ..models.group import GroupMember
@@ -24,15 +25,18 @@ async def invalidate_recipe_cache(recipe_id: UUID = None):
     """Invalidate recipe cache after modifications"""
     try:
         redis = await get_redis()
-        if recipe_id:
-            # Delete specific recipe cache
-            await redis.delete(f"cache:/recipes/{recipe_id}")
-        # Delete list cache
-        await redis.delete("cache:/recipes")
+        try:
+            if recipe_id:
+                # Delete specific recipe cache
+                await redis.delete(f"cache:/recipes/{recipe_id}")
+            # Delete list cache
+            await redis.delete("cache:/recipes")
+        finally:
+            await redis.close()
     except Exception as e:
         logger.error(f"Cache invalidation error: {str(e)}")
 
-async def create_recipe(db: Session, recipe: RecipeCreate, user_id: UUID) -> Recipe:
+def create_recipe(db: Session, recipe: RecipeCreate, user_id: UUID) -> Recipe:
     """Create a new recipe after verifying user is member of the group"""
     # Check if user is member of the group
     membership = db.query(GroupMember).filter(
@@ -57,7 +61,8 @@ async def create_recipe(db: Session, recipe: RecipeCreate, user_id: UUID) -> Rec
     db.add(db_recipe)
     db.commit()
     db.refresh(db_recipe)
-    await invalidate_recipe_cache()
+    # Run cache invalidation in the background
+    asyncio.create_task(invalidate_recipe_cache())
     return db_recipe
 
 def get_public_recipes(db: Session, skip: int = 0, limit: int = 10) -> List[Recipe]:

@@ -18,7 +18,7 @@ async def create_group(
     current_user = Depends(get_current_user)
 ):
     """Create a new family group"""
-    return GroupService().create_group(db, current_user.id, group)
+    return await GroupService().create_group(db, current_user.id, group)
 
 @router.get("/", response_model=List[GroupResponse])
 @cache_response(expire_time_seconds=300)  # Cache for 5 minutes
@@ -28,6 +28,24 @@ async def get_user_groups(
 ):
     """Get all groups user belongs to"""
     return GroupService().get_user_groups(db, current_user.id)
+
+@router.get("/{group_id}", response_model=GroupResponse)
+async def get_group_by_id(
+    group_id: UUID,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Get a group by its ID"""
+    return GroupService().get_group_by_id(db, group_id)
+
+@router.get("/{group_id}/members", response_model=List[GroupMemberResponse])
+async def get_group_members(
+    group_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all members of a group"""
+    return GroupService().get_group_members(db, current_user.id, group_id)
 
 @router.post("/{group_id}/members", response_model=GroupMemberResponse)
 async def add_group_member(

@@ -1,6 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from uuid import UUID
+from typing import Optional
+from .user import UserResponse
 
 class GroupBase(BaseModel):
     name: str
@@ -20,10 +22,9 @@ class GroupResponse(GroupBase):
         from_attributes = True
 
 class GroupMemberResponse(BaseModel):
-    id: UUID
     user_id: UUID
     group_id: UUID
     joined_at: datetime
+    user: Optional[UserResponse] = None
 
-    class Config:
-        from_attributes = True 
+    model_config = ConfigDict(from_attributes=True) 
