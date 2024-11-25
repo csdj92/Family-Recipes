@@ -10,11 +10,19 @@ from ..services.auth import (
     get_password_hash
 )
 from ..schemas.user import UserCreate, UserResponse, Token
-from ..models.user import User
+from ..models.user import User, UserRole
+from ..config import get_settings
+from fastapi_limiter.depends import RateLimiter
 
 router = APIRouter()
 
-@router.post("/signup", response_model=UserResponse)
+settings = get_settings()
+
+@router.post(
+    "/signup",
+    response_model=UserResponse,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))]  # Rate limiting: 5 requests per minute
+)
 async def signup(user: UserCreate, db: Session = Depends(get_db)):
     # Check if user exists
     db_user = db.query(User).filter(User.email == user.email).first()
@@ -35,7 +43,11 @@ async def signup(user: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return new_user
 
-@router.post("/login", response_model=Token)
+@router.post(
+    "/login",
+    response_model=Token,
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))]  # Rate limiting: 5 requests per minute
+)
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
@@ -81,3 +93,36 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
     
     access_token = create_access_token(data={"sub": db_user.email})
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/create-admin", response_model=UserResponse)
+async def create_admin(
+    user: UserCreate,
+    admin_secret: str,
+    db: Session = Depends(get_db)
+):
+    """Create an admin user - requires admin secret key"""
+    if admin_secret != settings.ADMIN_SECRET_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin secret key"
+        )
+
+    # Check if user exists
+    db_user = db.query(User).filter(User.email == user.email).first()
+    if db_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    # Create new admin user
+    new_user = User(
+        email=user.email,
+        name=user.name,
+        password_hash=get_password_hash(user.password),
+        role=UserRole.ADMIN
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user

@@ -1,6 +1,8 @@
 # Standard library imports
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, List
+import logging
+
 
 # Third-party imports
 from jose import JWTError, jwt
@@ -13,10 +15,11 @@ from authlib.integrations.starlette_client import OAuth
 # Local application imports
 from ..config import get_settings
 from ..dependencies import get_db
-from ..models.user import User
+from ..models.user import User, UserRole
 
 # Initialize settings and security contexts
 settings = get_settings()
+logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # For password hashing
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")  # FastAPI's OAuth2 scheme
 
@@ -33,6 +36,7 @@ def authenticate_user(db: Session, email: str, password: str):
     """Authenticate a user by email and password."""
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(password, user.password_hash):
+        logger.warning(f"Failed login attempt for email: {email}")
         return False
     return user
 
@@ -72,8 +76,8 @@ async def get_current_user(
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
-            
-        # Verify user exists in database (moved inside try block)
+        
+        # Verify user exists in database
         user = db.query(User).filter(User.email == email).first()
         if user is None:
             raise credentials_exception
@@ -94,3 +98,71 @@ def get_google_oauth_client():
         }
     )
     return oauth.google 
+
+async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Check if current user is an admin"""
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
+
+async def check_user_role(user: User, allowed_roles: List[UserRole]) -> bool:
+    """Check if user has any of the allowed roles"""
+    return user.role in allowed_roles
+
+async def get_super_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Check if current user is a super admin"""
+    if current_user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin privileges required"
+        )
+    return current_user
+
+async def get_admin_or_above(current_user: User = Depends(get_current_user)) -> User:
+    """Check if current user is an admin or super admin"""
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required"
+        )
+    return current_user
+
+async def get_creator_or_above(current_user: User = Depends(get_current_user)) -> User:
+    """Check if user can create content"""
+    if current_user.role not in [
+        UserRole.CREATOR,
+        UserRole.ADMIN,
+        UserRole.SUPER_ADMIN,
+        UserRole.PREMIUM
+    ]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Creator privileges required"
+        )
+    return current_user
+
+async def get_premium_user(current_user: User = Depends(get_current_user)) -> User:
+    """Check if user has premium access"""
+    if current_user.role not in [UserRole.PREMIUM, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Premium subscription required"
+        )
+    # Check if premium subscription is expired
+    if (current_user.role == UserRole.PREMIUM and 
+        current_user.subscription_expires and 
+        current_user.subscription_expires < datetime.now(timezone.utc)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Premium subscription has expired"
+        )
+    return current_user
+
+# Add the following import at the top of the file
+import logging
+
+# Initialize the logger
+logger = logging.getLogger(__name__)
