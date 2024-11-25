@@ -35,3 +35,8 @@ def client(test_db):
     app.dependency_overrides[get_db] = override_get_db
     yield TestClient(app)
     del app.dependency_overrides[get_db] 
+
+@pytest.fixture(autouse=True)
+def mock_rate_limit(mocker):
+    """Mock rate limiter for tests"""
+    return mocker.patch("fastapi_limiter.depends.RateLimiter.__call__", return_value=True) 
