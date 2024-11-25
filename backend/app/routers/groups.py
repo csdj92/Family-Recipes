@@ -4,6 +4,7 @@ from typing import List
 from ..dependencies import get_db
 from ..services.auth import get_current_user
 from ..schemas.group import GroupCreate, GroupResponse, GroupMemberResponse
+from ..services.group import GroupService
 
 router = APIRouter()
 
@@ -14,7 +15,7 @@ async def create_group(
     current_user = Depends(get_current_user)
 ):
     """Create a new family group"""
-    pass
+    return GroupService().create_group(db, current_user.id, group)
 
 @router.get("/", response_model=List[GroupResponse])
 async def get_user_groups(
@@ -22,7 +23,7 @@ async def get_user_groups(
     current_user = Depends(get_current_user)
 ):
     """Get all groups user belongs to"""
-    pass
+    return GroupService().get_user_groups(db, current_user.id)
 
 @router.post("/{group_id}/members", response_model=GroupMemberResponse)
 async def add_group_member(
@@ -32,7 +33,7 @@ async def add_group_member(
     current_user = Depends(get_current_user)
 ):
     """Add a member to the group"""
-    pass
+    return GroupService().add_group_member(db, group_id, email, current_user.id)
 
 @router.delete("/{group_id}/members/{user_id}")
 async def remove_group_member(
@@ -42,4 +43,4 @@ async def remove_group_member(
     current_user = Depends(get_current_user)
 ):
     """Remove a member from the group"""
-    pass 
+    return GroupService().remove_group_member(db, group_id, user_id, current_user.id)
