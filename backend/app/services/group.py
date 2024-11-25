@@ -7,11 +7,24 @@ from sqlalchemy.exc import SQLAlchemyError
 from fastapi import HTTPException, status
 from typing import List
 from app.models.user import User, UserRole
+from ..dependencies import get_redis
 
 logger = logging.getLogger(__name__)
 
 class GroupService:
-    def create_group(self, db: Session, user_id: UUID, group: GroupCreate) -> FamilyGroup:
+    async def invalidate_group_cache(self, group_id: UUID = None):
+        """Invalidate group cache after modifications"""
+        try:
+            redis = await get_redis()
+            if group_id:
+                # Delete specific group cache
+                await redis.delete(f"cache:/groups/{group_id}")
+            # Delete list cache
+            await redis.delete("cache:/groups")
+        except Exception as e:
+            logger.error(f"Cache invalidation error: {str(e)}")
+
+    async def create_group(self, db: Session, user_id: UUID, group: GroupCreate) -> FamilyGroup:
         try:
             logger.info(f"Creating new group for user {user_id}")
             group_data = group.model_dump()
@@ -32,6 +45,7 @@ class GroupService:
             db.commit()
             db.refresh(group)
             logger.info(f"Successfully created group {group.id}")
+            await self.invalidate_group_cache()
             return group
             
         except SQLAlchemyError as e:

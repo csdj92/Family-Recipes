@@ -7,6 +7,7 @@ from ..schemas.group import GroupCreate, GroupResponse, GroupMemberResponse
 from ..services.group import GroupService
 from ..models.user import User
 from uuid import UUID
+from ..utils.cache import cache_response
 
 router = APIRouter()
 
@@ -20,6 +21,7 @@ async def create_group(
     return GroupService().create_group(db, current_user.id, group)
 
 @router.get("/", response_model=List[GroupResponse])
+@cache_response(expire_time_seconds=300)  # Cache for 5 minutes
 async def get_user_groups(
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)

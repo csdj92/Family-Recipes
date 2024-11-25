@@ -13,6 +13,7 @@ from ..services.auth import (
 from ..services import recipe as recipe_service
 from ..schemas.recipe import RecipeCreate, RecipeResponse, RecipeUpdate
 from ..models.user import User, UserRole
+from ..utils.cache import cache_response
 
 router = APIRouter()
 
@@ -26,6 +27,7 @@ async def create_recipe(
     return recipe_service.create_recipe(db, recipe, current_user.id)
 
 @router.get("/", response_model=List[RecipeResponse])
+@cache_response(expire_time_seconds=300)
 async def get_recipes(
     skip: int = 0,
     limit: int = 10,
@@ -49,6 +51,7 @@ async def get_all_recipes(
     return recipe_service.get_all_recipes(db, current_user.id, skip, limit)
 
 @router.get("/{recipe_id}", response_model=RecipeResponse)
+@cache_response(expire_time_seconds=300)
 async def get_recipe(
     recipe_id: UUID,
     db: Session = Depends(get_db),

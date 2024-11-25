@@ -6,6 +6,10 @@ from typing import List
 from ..models.recipe import Recipe
 from ..models.group import GroupMember
 from ..schemas.recipe import RecipeCreate, RecipeUpdate
+from ..dependencies import get_redis
+import logging
+
+logger = logging.getLogger(__name__)
 
 def check_recipe_access(db: Session, recipe_id: UUID, user_id: UUID) -> bool:
     """Check if user has access to the recipe through group membership"""
@@ -16,7 +20,19 @@ def check_recipe_access(db: Session, recipe_id: UUID, user_id: UUID) -> bool:
         GroupMember.user_id == user_id
     ).first() is not None
 
-def create_recipe(db: Session, recipe: RecipeCreate, user_id: UUID) -> Recipe:
+async def invalidate_recipe_cache(recipe_id: UUID = None):
+    """Invalidate recipe cache after modifications"""
+    try:
+        redis = await get_redis()
+        if recipe_id:
+            # Delete specific recipe cache
+            await redis.delete(f"cache:/recipes/{recipe_id}")
+        # Delete list cache
+        await redis.delete("cache:/recipes")
+    except Exception as e:
+        logger.error(f"Cache invalidation error: {str(e)}")
+
+async def create_recipe(db: Session, recipe: RecipeCreate, user_id: UUID) -> Recipe:
     """Create a new recipe after verifying user is member of the group"""
     # Check if user is member of the group
     membership = db.query(GroupMember).filter(
@@ -41,6 +57,7 @@ def create_recipe(db: Session, recipe: RecipeCreate, user_id: UUID) -> Recipe:
     db.add(db_recipe)
     db.commit()
     db.refresh(db_recipe)
+    await invalidate_recipe_cache()
     return db_recipe
 
 def get_public_recipes(db: Session, skip: int = 0, limit: int = 10) -> List[Recipe]:
@@ -83,7 +100,7 @@ def get_recipe_by_id(db: Session, recipe_id: UUID, user_id: UUID) -> Recipe:
     
     return recipe
 
-def update_recipe(db: Session, recipe_id: UUID, recipe_update: RecipeUpdate, user_id: UUID) -> Recipe:
+async def update_recipe(db: Session, recipe_id: UUID, recipe_update: RecipeUpdate, user_id: UUID) -> Recipe:
     """Update a recipe if user has access"""
     recipe = get_recipe_by_id(db, recipe_id, user_id)
     
@@ -94,14 +111,16 @@ def update_recipe(db: Session, recipe_id: UUID, recipe_update: RecipeUpdate, use
     
     db.commit()
     db.refresh(recipe)
+    await invalidate_recipe_cache(recipe_id)
     return recipe
 
-def delete_recipe(db: Session, recipe_id: UUID, user_id: UUID) -> bool:
+async def delete_recipe(db: Session, recipe_id: UUID, user_id: UUID) -> bool:
     """Delete a recipe if user has access"""
     recipe = get_recipe_by_id(db, recipe_id, user_id)
     
     db.delete(recipe)
     db.commit()
+    await invalidate_recipe_cache(recipe_id)
     return True
 
 async def parse_recipe_image(db: Session, image: UploadFile, user_id: UUID):
