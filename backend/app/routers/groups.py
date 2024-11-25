@@ -5,6 +5,8 @@ from ..dependencies import get_db
 from ..services.auth import get_current_user
 from ..schemas.group import GroupCreate, GroupResponse, GroupMemberResponse
 from ..services.group import GroupService
+from ..models.user import User
+from uuid import UUID
 
 router = APIRouter()
 
@@ -27,13 +29,19 @@ async def get_user_groups(
 
 @router.post("/{group_id}/members", response_model=GroupMemberResponse)
 async def add_group_member(
-    group_id: str,
+    group_id: UUID,
     email: str,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)
 ):
     """Add a member to the group"""
-    return GroupService().add_group_member(db, group_id, email, current_user.id)
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return GroupService().add_group_member(db, group_id, user.id, current_user.id)
 
 @router.delete("/{group_id}/members/{user_id}")
 async def remove_group_member(

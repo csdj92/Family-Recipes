@@ -6,10 +6,8 @@ class GroupBase(BaseModel):
     name: str
 
 class GroupCreate(GroupBase):
-    id: UUID
-    owner_id: UUID
-    created_at: datetime
-    
+    name: str
+
     class Config:
         from_attributes = True
 
