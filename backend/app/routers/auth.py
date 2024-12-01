@@ -1,128 +1,52 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
-from ..dependencies import get_db
-from ..services.auth import (
-    authenticate_user,
-    create_access_token,
-    get_current_user,
-    get_google_oauth_client,
-    get_password_hash
-)
+from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi.security import OAuth2PasswordBearer
 from ..schemas.user import UserCreate, UserResponse, Token
-from ..models.user import User, UserRole
-from ..config import get_settings
-from fastapi_limiter.depends import RateLimiter
+from ..utils.auth import get_current_user
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
-settings = get_settings()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-@router.post(
-    "/signup",
-    response_model=UserResponse,
-    dependencies=[Depends(RateLimiter(times=5, seconds=60))]  # Rate limiting: 5 requests per minute
-)
-async def signup(user: UserCreate, db: Session = Depends(get_db)):
-    # Check if user exists
-    db_user = db.query(User).filter(User.email == user.email).first()
-    if db_user:
+@router.post("/signup", response_model=UserResponse)
+async def signup(user_data: UserCreate):
+    """
+    Register a new user using Supabase Auth
+    """
+    try:
+        # We don't need to handle signup here as it's handled by Supabase directly
+        # Just return success as the trigger will create the user in our DB
+        return {
+            "message": "Signup should be handled by Supabase Auth directly",
+            "status": "error",
+            "error": "Please use Supabase signup"
+        }
+    except Exception as e:
+        logger.error(f"Signup error: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
-    
-    # Create new user
-    new_user = User(
-        email=user.email,
-        name=user.name,
-        password_hash=get_password_hash(user.password)
+
+@router.post("/login", response_model=Token)
+async def login(request: Request):
+    """
+    Login is handled by Supabase Auth directly
+    This endpoint is just a placeholder
+    """
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Please use Supabase Auth for login"
     )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
 
-@router.post(
-    "/login",
-    response_model=Token,
-    dependencies=[Depends(RateLimiter(times=5, seconds=60))]  # Rate limiting: 5 requests per minute
-)
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
-):
-    user = authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    access_token = create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user = Depends(get_current_user)):
-    """Get current user's information"""
-    return current_user
-
-@router.get("/google/login")
-async def google_login():
-    client = get_google_oauth_client()
-    redirect_uri = client.create_authorization_url()
-    return {"url": redirect_uri}
-
-@router.get("/google/callback")
-async def google_callback(code: str, db: Session = Depends(get_db)):
-    client = get_google_oauth_client()
-    token = client.fetch_token(code=code)
-    user_info = client.get_user_info(token)
-    
-    # Check if user exists, if not create new user
-    db_user = db.query(User).filter(User.email == user_info["email"]).first()
-    if not db_user:
-        db_user = User(
-            email=user_info["email"],
-            name=user_info["name"],
-        )
-        db.add(db_user)
-        db.commit()
-        db.refresh(db_user)
-    
-    access_token = create_access_token(data={"sub": db_user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@router.post("/create-admin", response_model=UserResponse)
-async def create_admin(
-    user: UserCreate,
-    admin_secret: str,
-    db: Session = Depends(get_db)
-):
-    """Create an admin user - requires admin secret key"""
-    if admin_secret != settings.ADMIN_SECRET_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid admin secret key"
-        )
-
-    # Check if user exists
-    db_user = db.query(User).filter(User.email == user.email).first()
-    if db_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Create new admin user
-    new_user = User(
-        email=user.email,
-        name=user.name,
-        password_hash=get_password_hash(user.password),
-        role=UserRole.ADMIN
+@router.post("/logout")
+async def logout(request: Request):
+    """
+    Logout is handled by Supabase Auth directly
+    This endpoint is just a placeholder
+    """
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Please use Supabase Auth for logout"
     )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user

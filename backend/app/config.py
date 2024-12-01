@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     SUPABASE_URL: str
     SUPABASE_KEY: str
+    SUPABASE_JWT_SECRET: str
     SECRET_KEY: str
     ADMIN_SECRET_KEY: str
     ALGORITHM: str = "HS256"

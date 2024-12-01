@@ -50,3 +50,27 @@ def cache_response(expire_time_seconds: int = 300):
 
         return wrapper
     return decorator 
+
+def cache_data(cache_key_func, expire_time_seconds=300):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            cache_key = cache_key_func(*args, **kwargs)
+            try:
+                redis = await get_redis()
+                cached_data = await redis.get(cache_key)
+                if cached_data:
+                    return json.loads(cached_data)
+            except Exception as e:
+                logger.error(f"Cache retrieval error: {str(e)}")
+            
+            result = await func(*args, **kwargs)
+            
+            try:
+                await redis.set(cache_key, json.dumps(result), ex=expire_time_seconds)
+            except Exception as e:
+                logger.error(f"Cache set error: {str(e)}")
+            
+            return result
+        return wrapper
+    return decorator 

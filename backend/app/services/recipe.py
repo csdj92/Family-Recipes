@@ -3,11 +3,13 @@ from fastapi import HTTPException, status, UploadFile
 from uuid import UUID
 from typing import List
 import asyncio
+import json
 
 from ..models.recipe import Recipe
 from ..models.group import GroupMember
 from ..schemas.recipe import RecipeCreate, RecipeUpdate
 from ..dependencies import get_redis
+from ..utils.cache import get_redis
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,8 +30,8 @@ async def invalidate_recipe_cache(recipe_id: UUID = None):
         try:
             if recipe_id:
                 # Delete specific recipe cache
-                await redis.delete(f"cache:/recipes/{recipe_id}")
-            # Delete list cache
+                await redis.delete(f"recipe:{recipe_id}")
+            # Delete list cache if applicable
             await redis.delete("cache:/recipes")
         finally:
             await redis.close()
@@ -83,8 +85,18 @@ def get_all_recipes(db: Session, user_id: UUID = None, skip: int = 0, limit: int
     """Get all recipes in the system - Admin only"""
     return db.query(Recipe).offset(skip).limit(limit).all()
 
-def get_recipe_by_id(db: Session, recipe_id: UUID, user_id: UUID) -> Recipe:
+async def get_recipe_by_id(db: Session, recipe_id: UUID, user_id: UUID) -> Recipe:
     """Get a specific recipe if user has access"""
+    cache_key = f"recipe:{recipe_id}"
+    try:
+        redis = await get_redis()
+        cached_recipe = await redis.get(cache_key)
+        if cached_recipe:
+            return Recipe.parse_raw(cached_recipe)
+    except Exception as e:
+        logger.error(f"Cache retrieval error: {str(e)}")
+
+    # Fetch from database
     recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
     if not recipe:
         raise HTTPException(
@@ -92,10 +104,31 @@ def get_recipe_by_id(db: Session, recipe_id: UUID, user_id: UUID) -> Recipe:
             detail="Recipe not found"
         )
     
-    # Check if recipe is public
-    if recipe.is_public:
-        return recipe
-        
+    # Check if user has access through group membership
+    if not check_recipe_access(db, recipe_id, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
+    # Cache the recipe
+    try:
+        await redis.set(cache_key, recipe.json(), ex=300)  # Cache for 5 minutes
+    except Exception as e:
+        logger.error(f"Cache set error: {str(e)}")
+
+    return recipe
+
+async def update_recipe(db: Session, recipe_id: UUID, recipe_update: RecipeUpdate, user_id: UUID) -> Recipe:
+    """Update a recipe if user has access"""
+    # Check if recipe exists and user has access
+    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
+    
     # Check if user has access through group membership
     if not check_recipe_access(db, recipe_id, user_id):
         raise HTTPException(
@@ -103,30 +136,55 @@ def get_recipe_by_id(db: Session, recipe_id: UUID, user_id: UUID) -> Recipe:
             detail="Access denied"
         )
     
-    return recipe
-
-async def update_recipe(db: Session, recipe_id: UUID, recipe_update: RecipeUpdate, user_id: UUID) -> Recipe:
-    """Update a recipe if user has access"""
-    recipe = get_recipe_by_id(db, recipe_id, user_id)
-    
     # Update recipe attributes
     for var, value in vars(recipe_update).items():
         if value is not None:
             setattr(recipe, var, value)
     
-    db.commit()
-    db.refresh(recipe)
-    await invalidate_recipe_cache(recipe_id)
-    return recipe
+    try:
+        db.commit()
+        db.refresh(recipe)
+        await invalidate_recipe_cache(recipe_id)
+        return recipe
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating recipe: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update recipe"
+        )
 
 async def delete_recipe(db: Session, recipe_id: UUID, user_id: UUID) -> bool:
     """Delete a recipe if user has access"""
-    recipe = get_recipe_by_id(db, recipe_id, user_id)
+    # First check if recipe exists
+    recipe = db.query(Recipe).filter(Recipe.id == recipe_id).first()
+    if not recipe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recipe not found"
+        )
     
-    db.delete(recipe)
-    db.commit()
-    await invalidate_recipe_cache(recipe_id)
-    return True
+    # Check if user has access through group membership
+    if not check_recipe_access(db, recipe_id, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    try:
+        # Delete the recipe
+        db.delete(recipe)
+        db.commit()
+        # Invalidate cache
+        await invalidate_recipe_cache(recipe_id)
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting recipe: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete recipe"
+        )
 
 async def parse_recipe_image(db: Session, image: UploadFile, user_id: UUID):
     """Parse recipe from image - Premium feature"""
